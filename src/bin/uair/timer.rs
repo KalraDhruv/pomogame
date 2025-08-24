@@ -2,15 +2,29 @@ use crate::app::Event;
 use crate::session::Session;
 use crate::socket::BlockingStream;
 use crate::Error;
+use once_cell::sync::OnceCell;
 use async_io::Timer;
 use std::fmt::Write as _;
 use std::io::{self, Stdout, Write};
 use std::time::{Duration, Instant};
 
+
 pub struct UairTimer {
 	interval: Duration,
 	pub writer: Writer,
 	pub state: State,
+	pub overtime_ran_once : bool,
+	pub overtimer: OverTimer,
+}
+pub struct OverTimer {
+	pub overtime: OnceCell<Duration>,
+}
+impl OverTimer {
+	fn set_overtime(&self, duration:Duration)-> Duration{
+		*self.overtime.get_or_init(|| {
+			duration
+		})
+	}
 }
 
 impl UairTimer {
@@ -19,6 +33,10 @@ impl UairTimer {
 			interval,
 			writer: Writer::new(quiet),
 			state: State::PreInit,
+			overtime_ran_once: false,
+			overtimer: OverTimer{
+				overtime: OnceCell::new(),
+			},
 		}
 	}
 
@@ -33,13 +51,24 @@ impl UairTimer {
 		let duration = dest - start;
 		let first_interval = Duration::from_nanos(duration.subsec_nanos().into());
 		let mut end = start + first_interval;
-
+		
+		let overtime = self.overtimer.set_overtime(duration);
+		
 		while end <= dest {
 			Timer::at(end).await;
 			self.writer.write::<true>(session, dest - end)?;
 			end += self.interval;
 		}
-
+		
+		if !self.overtime_ran_once{
+			self.overtime_ran_once = true;
+			while end.duration_since(dest) <= overtime{
+				Timer::at(end).await;
+				self.writer.write::<true>(session,  end - dest)?;
+				end += self.interval;
+			}
+		}
+		self.overtime_ran_once = false;
 		Ok(Event::Finished)
 	}
 }

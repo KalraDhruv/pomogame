@@ -10,6 +10,7 @@ keywords = ["pomodoro", "timer", "countdown", "cli", "productivity"]
 categories = ["command-line-utilities"]
 
 [dependencies]
+once_cell = "1.19.0"
 argh = "0.1.13"
 async-io = "2.4.0"
 async-net = "2.0.0"

@@ -134,6 +134,9 @@ impl App {
 
 	async fn pause_session(&mut self, duration: Duration) -> Result<(), Error> {
 		const DELTA: Duration = Duration::from_nanos(1_000_000_000 - 1);
+		if self.timer.overtime_ran_once{
+			println!("I am running!");
+		}
 
 		self.timer
 			.writer
