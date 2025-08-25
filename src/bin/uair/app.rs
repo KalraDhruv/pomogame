@@ -1,7 +1,8 @@
 use crate::config::{Config, ConfigBuilder};
 use crate::session::{Overridables, Session, SessionId};
+use once_cell::sync::OnceCell;
 use crate::socket::{Listener, Stream};
-use crate::timer::{State, UairTimer};
+use crate::timer::{OverTimer, State, UairTimer};
 use crate::{Args, Error};
 use futures_lite::FutureExt;
 use log::error;
@@ -89,7 +90,6 @@ impl App {
 	}
 
 	async fn run_session(&mut self, start: Instant, dest: Instant) -> Result<(), Error> {
-		println!("I run when you call pause or resume?");
 
 
 		match self
@@ -155,9 +155,10 @@ impl App {
 		});
 
 		if *self.timer.overtime_ran_once.lock().unwrap() {
-			println!("I am running! Here's your value for overtime {:?}", self.timer.overtime_val);
-			let res = self.data.curr_session().run_command();
-			res?;
+			*self.timer.overtime_ran_once.lock().unwrap() = false;
+			self.timer.overtimer= OverTimer{
+				overtime: OnceCell::new(),
+			};
 		}
 		self.timer
 			.writer
@@ -276,13 +277,15 @@ impl AppData {
 			match command {
 				Command::Pause(_) | Command::Toggle(_) if R => return {
 					if *self.overtime_exit.lock().unwrap(){
-						println!("I am working from overtime_exit");
 						Ok(Event::Finished)
 					}else{
 						Ok(Event::Command(command))
 					}
 				},
 				Command::Resume(_) | Command::Toggle(_) if !R => {
+					if *self.overtime_exit.lock().unwrap(){
+						*self.overtime_exit.lock().unwrap() = false;
+					}
 					return Ok(Event::Command(Command::Resume(ResumeArgs {})))
 				}
 				Command::Next(_) if !self.sid.is_last() => return Ok(Event::Command(command)),
