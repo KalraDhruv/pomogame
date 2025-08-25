@@ -8,6 +8,8 @@ use log::error;
 use std::fs;
 use std::io::{self, Error as IoError, ErrorKind, Write};
 use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use uair::{Command, FetchArgs, JumpArgs, ListenArgs, PauseArgs, ResumeArgs};
 
 pub struct App {
@@ -87,6 +89,9 @@ impl App {
 	}
 
 	async fn run_session(&mut self, start: Instant, dest: Instant) -> Result<(), Error> {
+		println!("I run when you call pause or resume?");
+
+
 		match self
 			.timer
 			.start(self.data.curr_session(), start, dest)
@@ -134,14 +139,29 @@ impl App {
 
 	async fn pause_session(&mut self, duration: Duration) -> Result<(), Error> {
 		const DELTA: Duration = Duration::from_nanos(1_000_000_000 - 1);
-		if self.timer.overtime_ran_once{
-			println!("I am running!");
-		}
+		let overtime_ran_once_clone = Arc::clone(&self.timer.overtime_ran_once);
+		let overtime_exit_clone = Arc::clone(&self.data.overtime_exit);
 
+		let _watcher  = thread::spawn(move || {
+			loop{
+				if *overtime_ran_once_clone.lock().unwrap(){
+					let data_flag = overtime_exit_clone.lock();
+					*data_flag.unwrap() = true;
+					break;
+				}
+				
+
+			}
+		});
+
+		if *self.timer.overtime_ran_once.lock().unwrap() {
+			println!("I am running! Here's your value for overtime {:?}", self.timer.overtime_val);
+			let res = self.data.curr_session().run_command();
+			res?;
+		}
 		self.timer
 			.writer
 			.write::<false>(self.data.curr_session(), duration + DELTA)?;
-
 		match self.data.handle_commands::<false>().await? {
 			Event::Finished => {
 				let res = self.data.curr_session().run_command();
@@ -205,6 +225,7 @@ struct AppData {
 	sid: SessionId,
 	config: Config,
 	config_path: String,
+	overtime_exit: Arc<Mutex<bool>>,
 }
 
 impl AppData {
@@ -214,6 +235,7 @@ impl AppData {
 			sid: SessionId::default(),
 			config: Config::default(),
 			config_path: args.config,
+			overtime_exit: Arc::new(Mutex::new(false)),
 		};
 		data.read_conf::<false>()?;
 		Ok(data)
@@ -252,9 +274,14 @@ impl AppData {
 			let msg = stream.read(&mut buffer).await?;
 			let command: Command = bincode::deserialize(msg)?;
 			match command {
-				Command::Pause(_) | Command::Toggle(_) if R => {
-					return Ok(Event::Command(Command::Pause(PauseArgs {})))
-				}
+				Command::Pause(_) | Command::Toggle(_) if R => return {
+					if *self.overtime_exit.lock().unwrap(){
+						println!("I am working from overtime_exit");
+						Ok(Event::Finished)
+					}else{
+						Ok(Event::Command(command))
+					}
+				},
 				Command::Resume(_) | Command::Toggle(_) if !R => {
 					return Ok(Event::Command(Command::Resume(ResumeArgs {})))
 				}

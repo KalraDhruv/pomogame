@@ -5,6 +5,7 @@ use crate::Error;
 use once_cell::sync::OnceCell;
 use async_io::Timer;
 use std::fmt::Write as _;
+use std::sync::{Arc, Mutex};
 use std::io::{self, Stdout, Write};
 use std::time::{Duration, Instant};
 
@@ -13,8 +14,9 @@ pub struct UairTimer {
 	interval: Duration,
 	pub writer: Writer,
 	pub state: State,
-	pub overtime_ran_once : bool,
+	pub overtime_ran_once : Arc<Mutex<bool>>,
 	pub overtimer: OverTimer,
+	pub overtime_val: i32,
 }
 pub struct OverTimer {
 	pub overtime: OnceCell<Duration>,
@@ -33,7 +35,8 @@ impl UairTimer {
 			interval,
 			writer: Writer::new(quiet),
 			state: State::PreInit,
-			overtime_ran_once: false,
+			overtime_ran_once: Arc::new(Mutex::new(false)),
+			overtime_val: 0,
 			overtimer: OverTimer{
 				overtime: OnceCell::new(),
 			},
@@ -60,15 +63,23 @@ impl UairTimer {
 			end += self.interval;
 		}
 		
-		if !self.overtime_ran_once{
-			self.overtime_ran_once = true;
+		
+		if !*self.overtime_ran_once.lock().unwrap(){
+			*self.overtime_ran_once.lock().unwrap() = true;
 			while end.duration_since(dest) <= overtime{
+				
 				Timer::at(end).await;
 				self.writer.write::<true>(session,  end - dest)?;
 				end += self.interval;
+				self.overtime_val += 1
 			}
+			//Send overtime_val from here to any function which requires it The same one as in Pause!
 		}
-		self.overtime_ran_once = false;
+		self.overtime_val = 0;
+		*self.overtime_ran_once.lock().unwrap() = false;
+		self.overtimer= OverTimer{
+				overtime: OnceCell::new(),
+		};
 		Ok(Event::Finished)
 	}
 }

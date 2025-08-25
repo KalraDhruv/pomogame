@@ -27,6 +27,8 @@ simplelog = "0.12.2"
 thiserror = "2.0.11"
 toml = "0.8.19"
 winnow = "0.7.0"
+async-std= { version = "1", features = ["attributes","tokio1"] }
+tokio = "1.47.1"
 
 [dev-dependencies]
 testing_logger = "0.1"
