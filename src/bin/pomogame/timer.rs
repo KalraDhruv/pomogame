@@ -2,31 +2,19 @@ use crate::app::Event;
 use crate::session::Session;
 use crate::socket::BlockingStream;
 use crate::Error;
-use once_cell::sync::OnceCell;
 use async_io::Timer;
 use std::fmt::Write as _;
-use std::sync::{Arc, Mutex};
 use std::io::{self, Stdout, Write};
 use std::time::{Duration, Instant};
-
-
+use std::sync::{Arc, Mutex};
 pub struct UairTimer {
 	interval: Duration,
 	pub writer: Writer,
 	pub state: State,
-	pub overtime_ran_once : Arc<Mutex<bool>>,
-	pub overtimer: OverTimer,
-	pub overtime_val: i32,
-}
-pub struct OverTimer {
-	pub overtime: OnceCell<Duration>,
-}
-impl OverTimer {
-	fn set_overtime(&self, duration:Duration)-> Duration{
-		*self.overtime.get_or_init(|| {
-			duration
-		})
-	}
+	pub overtime_duration: Duration,
+	pub current_val: Instant,
+	pub overtime_time_elapsed: Arc<Mutex<Duration>>,
+	pub overtime_called_once: Arc<Mutex<bool>>,
 }
 
 impl UairTimer {
@@ -35,11 +23,10 @@ impl UairTimer {
 			interval,
 			writer: Writer::new(quiet),
 			state: State::PreInit,
-			overtime_ran_once: Arc::new(Mutex::new(false)),
-			overtime_val: 0,
-			overtimer: OverTimer{
-				overtime: OnceCell::new(),
-			},
+			overtime_duration: Duration::new(0,0),
+			current_val:Instant::now(),
+			overtime_time_elapsed: Arc::new(Mutex::new(Duration::from_secs(1))),
+			overtime_called_once: Arc::new(Mutex::new(false)),
 		}
 	}
 
@@ -53,33 +40,28 @@ impl UairTimer {
 
 		let duration = dest - start;
 		let first_interval = Duration::from_nanos(duration.subsec_nanos().into());
-		let mut end = start + first_interval;
-		
-		let overtime = self.overtimer.set_overtime(duration);
-		
-		while end <= dest {
-			Timer::at(end).await;
-			self.writer.write::<true>(session, dest - end)?;
-			end += self.interval;
+		self.current_val = start + first_interval;
+
+		while self.current_val <= dest {
+			Timer::at(self.current_val).await;
+			self.writer.write::<true>(session, dest - self.current_val)?;
+			self.current_val+= self.interval;
 		}
-		
-		
-		if !*self.overtime_ran_once.lock().unwrap(){
-			*self.overtime_ran_once.lock().unwrap() = true;
-			while end.duration_since(dest) <= overtime{
-				
-				Timer::at(end).await;
-				self.writer.write::<true>(session,  end - dest)?;
-				end += self.interval;
-				self.overtime_val += 1
-			}
-			//Send overtime_val from here to any function which requires it The same one as in Pause!
-		}
-		self.overtime_val = 0;
-		*self.overtime_ran_once.lock().unwrap() = false;
-		self.overtimer= OverTimer{
-				overtime: OnceCell::new(),
-		};
+
+		// From Here starts the functionality of overtime.
+		// This was not made into a function because once start is finished, the run_session handles no user commands.
+		let second_interval= Duration::from_nanos(self.overtime_duration.subsec_nanos().into());
+		self.current_val += second_interval;
+		*self.overtime_called_once.lock().unwrap() = true;
+
+		while self.current_val.duration_since(dest) <= self.overtime_duration{
+				Timer::at(self.current_val).await;
+				self.writer.write::<true>(session, self.current_val - dest )?;
+				self.current_val += self.interval;
+				*self.overtime_time_elapsed.lock().unwrap() = self.current_val - dest ;
+		}	
+
+
 		Ok(Event::Finished)
 	}
 }

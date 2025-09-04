@@ -1,18 +1,31 @@
 use crate::config::{Config, ConfigBuilder};
 use crate::session::{Overridables, Session, SessionId};
-use once_cell::sync::OnceCell;
 use crate::socket::{Listener, Stream};
-use crate::timer::{OverTimer, State, UairTimer};
+use crate::timer::{State, UairTimer};
 use crate::{Args, Error};
 use futures_lite::FutureExt;
 use log::error;
 use std::fs;
 use std::io::{self, Error as IoError, ErrorKind, Write};
 use std::time::{Duration, Instant};
+use uair::{Command, FetchArgs, JumpArgs, ListenArgs, PauseArgs, ResumeArgs};
+use once_cell::sync::OnceCell;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use uair::{Command, FetchArgs, JumpArgs, ListenArgs, PauseArgs, ResumeArgs};
 
+static mut OVERTIMER:OverTimer = OverTimer{
+	overtime:OnceCell::new()
+};
+pub struct OverTimer {
+	pub overtime: OnceCell<bool>,
+}
+impl OverTimer {
+	fn set_overtime(&self, value:bool) -> bool{
+		*self.overtime.get_or_init(|| {
+			value
+		})
+	}
+}
 pub struct App {
 	data: AppData,
 	timer: UairTimer,
@@ -90,8 +103,17 @@ impl App {
 	}
 
 	async fn run_session(&mut self, start: Instant, dest: Instant) -> Result<(), Error> {
-
-
+		// This block of code makes sure that the Overtimer is reinitialized for each session.
+		// Below the Once Cell variable, overtime_called_once and overtime_time_elapsed are set to their default values.
+		unsafe{
+			if OVERTIMER.overtime.get().is_none(){
+				self.timer.overtime_duration = dest - start;
+				*self.timer.overtime_time_elapsed.lock().unwrap() = Duration::from_secs(1);
+				*self.timer.overtime_called_once.lock().unwrap() = false;
+				*self.data.overtime_called_once.lock().unwrap() = false;
+				let _ = OVERTIMER.set_overtime(true);
+			}
+		}
 		match self
 			.timer
 			.start(self.data.curr_session(), start, dest)
@@ -103,12 +125,19 @@ impl App {
 				self.timer.state = if self.data.sid.is_last() {
 					State::Finished
 				} else {
+					unsafe{
+						OVERTIMER.overtime = OnceCell::new();
+					}
 					self.data.next_session()
 				};
 				res?;
 			}
 			Event::Command(Command::Pause(_)) => {
-				self.timer.state = State::Paused(dest - Instant::now())
+				if *self.timer.overtime_called_once.lock().unwrap(){
+					self.timer.state = self.data.next_session() 
+				}else{
+					self.timer.state = State::Paused(dest - Instant::now())
+				}
 			}
 			Event::Command(Command::Next(_)) => self.timer.state = self.data.next_session(),
 			Event::Command(Command::Prev(_)) => self.timer.state = self.data.prev_session(),
@@ -116,7 +145,7 @@ impl App {
 			Event::Command(Command::Reload(_)) => self.data.read_conf::<true>()?,
 			Event::Fetch(format, stream) => {
 				self.data
-					.handle_fetch_resumed(Some(&Overridables::new().format(&format)), stream, dest)
+					.handle_fetch_resumed(*self.timer.overtime_time_elapsed.lock().unwrap(),Some(&Overridables::new().format(&format)), stream, dest)
 					.await?
 			}
 			Event::Listen(overrid, stream) => self
@@ -124,8 +153,10 @@ impl App {
 				.writer
 				.add_stream(stream.into_blocking(), overrid),
 			Event::ListenExit(overrid, stream) => {
+
 				self.data
 					.handle_fetch_resumed(
+						*self.timer.overtime_time_elapsed.lock().unwrap(),
 						overrid.and_then(|o| self.data.curr_session().overrides.get(&o)),
 						stream,
 						dest,
@@ -139,30 +170,23 @@ impl App {
 
 	async fn pause_session(&mut self, duration: Duration) -> Result<(), Error> {
 		const DELTA: Duration = Duration::from_nanos(1_000_000_000 - 1);
-		let overtime_ran_once_clone = Arc::clone(&self.timer.overtime_ran_once);
-		let overtime_exit_clone = Arc::clone(&self.data.overtime_exit);
-
-		let _watcher  = thread::spawn(move || {
-			loop{
-				if *overtime_ran_once_clone.lock().unwrap(){
-					let data_flag = overtime_exit_clone.lock();
-					*data_flag.unwrap() = true;
+		// Logic to pause the overtime counter once it has run once and pause has been pressed.
+		let overtime_ran_once_timer_clone = Arc::clone(&self.timer.overtime_called_once);
+		let overtime_ran_once_data_clone=Arc::clone(&self.data.overtime_called_once);
+		
+		let _watcher = thread::spawn(move || {
+			loop {
+				if *overtime_ran_once_timer_clone.lock().unwrap(){
+					*overtime_ran_once_data_clone.lock().unwrap() = true;
 					break;
 				}
-				
-
 			}
 		});
 
-		if *self.timer.overtime_ran_once.lock().unwrap() {
-			*self.timer.overtime_ran_once.lock().unwrap() = false;
-			self.timer.overtimer= OverTimer{
-				overtime: OnceCell::new(),
-			};
-		}
 		self.timer
 			.writer
 			.write::<false>(self.data.curr_session(), duration + DELTA)?;
+
 		match self.data.handle_commands::<false>().await? {
 			Event::Finished => {
 				let res = self.data.curr_session().run_command();
@@ -226,7 +250,7 @@ struct AppData {
 	sid: SessionId,
 	config: Config,
 	config_path: String,
-	overtime_exit: Arc<Mutex<bool>>,
+	overtime_called_once: Arc<Mutex<bool>>,
 }
 
 impl AppData {
@@ -236,7 +260,7 @@ impl AppData {
 			sid: SessionId::default(),
 			config: Config::default(),
 			config_path: args.config,
-			overtime_exit: Arc::new(Mutex::new(false)),
+			overtime_called_once: Arc::new(Mutex::new(false)),
 		};
 		data.read_conf::<false>()?;
 		Ok(data)
@@ -275,17 +299,14 @@ impl AppData {
 			let msg = stream.read(&mut buffer).await?;
 			let command: Command = bincode::deserialize(msg)?;
 			match command {
-				Command::Pause(_) | Command::Toggle(_) if R => return {
-					if *self.overtime_exit.lock().unwrap(){
-						Ok(Event::Finished)
+				Command::Pause(_) | Command::Toggle(_) if R => {
+					if *self.overtime_called_once.lock().unwrap(){
+						return Ok(Event::Finished)
 					}else{
-						Ok(Event::Command(command))
+						return Ok(Event::Command(Command::Pause(PauseArgs {})))						
 					}
 				},
 				Command::Resume(_) | Command::Toggle(_) if !R => {
-					if *self.overtime_exit.lock().unwrap(){
-						*self.overtime_exit.lock().unwrap() = false;
-					}
 					return Ok(Event::Command(Command::Resume(ResumeArgs {})))
 				}
 				Command::Next(_) if !self.sid.is_last() => return Ok(Event::Command(command)),
@@ -310,14 +331,20 @@ impl AppData {
 		}
 	}
 
+	// The fetch_resumed have been changed to contain overtime_time_elapsed.
 	async fn handle_fetch_resumed(
 		&self,
+		overtime_time_elapsed: Duration,
 		overrides: Option<&Overridables>,
 		mut stream: Stream,
 		dest: Instant,
 	) -> Result<(), Error> {
 		let remaining = dest - Instant::now();
-		let displayed = self.curr_session().display::<true>(remaining, overrides);
+		let mut displayed = self.curr_session().display::<true>(remaining, overrides);
+		if remaining == Duration::ZERO{
+			displayed = self.curr_session().display::<true>(overtime_time_elapsed, overrides);
+			
+		}
 		stream.write(format!("{}", displayed).as_bytes()).await?;
 		Ok(())
 	}

@@ -98,7 +98,8 @@ impl<const R: bool> Display for DisplayableSession<'_, R> {
 				Token::Percent => write!(
 					f,
 					"{}",
-					(self.time.time.as_secs_f32() * 100.0 / self.session.duration.as_secs_f32())
+					// Changed from f32 to secs to show correct percentage.	
+					((self.time.time.as_secs()) * 100 / self.session.duration.as_secs())
 						as u8
 				)?,
 				Token::Time => write!(f, "{}", self.time)?,

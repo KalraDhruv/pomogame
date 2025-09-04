@@ -5,6 +5,10 @@ use std::env;
 #[derive(FromArgs, Serialize, Deserialize)]
 #[argh(subcommand)]
 pub enum Command {
+	Level(LevelArgs),
+	Name(NameArgs),
+	Stamina(StaminaArgs),
+	Lazy(LazyArgs),
 	Pause(PauseArgs),
 	Resume(ResumeArgs),
 	Toggle(ToggleArgs),
@@ -16,6 +20,26 @@ pub enum Command {
 	Fetch(FetchArgs),
 	Listen(ListenArgs),
 }
+
+#[derive(FromArgs, Serialize, Deserialize)]
+/// Obtain Player's Level.
+#[argh(subcommand, name = "level")]
+pub struct LevelArgs{}
+
+#[derive(FromArgs, Serialize, Deserialize)]
+/// Obtain Player's Name.
+#[argh(subcommand, name = "name")]
+pub struct NameArgs{}
+
+#[derive(FromArgs, Serialize, Deserialize)]
+/// Obtain Player's Stamina Value.
+#[argh(subcommand, name = "stamina")]
+pub struct StaminaArgs{}
+
+#[derive(FromArgs, Serialize, Deserialize)]
+/// Obtain Player's Lazy Value.
+#[argh(subcommand, name = "lazy")]
+pub struct LazyArgs{}
 
 #[derive(FromArgs, Serialize, Deserialize)]
 /// Pause the timer.
