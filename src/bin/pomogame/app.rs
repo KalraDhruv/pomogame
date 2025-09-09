@@ -2,6 +2,7 @@ use crate::config::{Config, ConfigBuilder};
 use crate::session::{Overridables, Session, SessionId};
 use crate::socket::{Listener, Stream};
 use crate::timer::{State, UairTimer};
+use crate::data::{PlayerConfig};
 use crate::{Args, Error};
 use futures_lite::FutureExt;
 use log::error;
@@ -10,12 +11,26 @@ use std::io::{self, Error as IoError, ErrorKind, Write};
 use std::time::{Duration, Instant};
 use uair::{Command, FetchArgs, JumpArgs, ListenArgs, PauseArgs, ResumeArgs};
 use once_cell::sync::OnceCell;
+use once_cell::sync::Lazy;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 static mut OVERTIMER:OverTimer = OverTimer{
 	overtime:OnceCell::new()
 };
+static WATCHER_THREAD: Lazy<thread::JoinHandle<()>> = Lazy::new(|| {
+    let overtime_ran_once_timer_clone = Arc::new(Mutex::new(false));
+    let overtime_ran_once_data_clone = Arc::new(Mutex::new(false));
+
+    thread::spawn(move || {
+        loop {
+            if *overtime_ran_once_timer_clone.lock().unwrap() {
+                *overtime_ran_once_data_clone.lock().unwrap() = true;
+                break;
+            }
+        }
+    })
+});
 pub struct OverTimer {
 	pub overtime: OnceCell<bool>,
 }
@@ -133,6 +148,7 @@ impl App {
 				res?;
 			}
 			Event::Command(Command::Pause(_)) => {
+				println!("How can you see me?!");
 				if *self.timer.overtime_called_once.lock().unwrap(){
 					self.timer.state = self.data.next_session() 
 				}else{
@@ -174,15 +190,10 @@ impl App {
 		let overtime_ran_once_timer_clone = Arc::clone(&self.timer.overtime_called_once);
 		let overtime_ran_once_data_clone=Arc::clone(&self.data.overtime_called_once);
 		
-		let _watcher = thread::spawn(move || {
-			loop {
-				if *overtime_ran_once_timer_clone.lock().unwrap(){
-					*overtime_ran_once_data_clone.lock().unwrap() = true;
-					break;
-				}
-			}
-		});
-
+		if *overtime_ran_once_timer_clone.lock().unwrap(){
+			*overtime_ran_once_data_clone.lock().unwrap() = true;
+		}
+		//let _watcher_handle = &*WATCHER_THREAD;
 		self.timer
 			.writer
 			.write::<false>(self.data.curr_session(), duration + DELTA)?;

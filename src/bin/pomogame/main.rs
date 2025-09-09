@@ -3,7 +3,8 @@ mod config;
 mod session;
 mod socket;
 mod timer;
-
+mod data;
+mod player;
 use crate::app::App;
 use argh::FromArgs;
 use async_signal::{Signal, Signals};

@@ -17,7 +17,6 @@ impl PlayerConfig {
     pub fn extract_from_path(file_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let expanded_path = shellexpand::tilde(file_path).to_string();
         
-        println!("Attempting to read player data from: {}", expanded_path);
         
         // Check if file exists
         if !Path::new(&expanded_path).exists() {

@@ -1,9 +1,13 @@
+mod data;
+mod player;
 use argh::FromArgs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::str;
 use uair::{get_socket_path, Command, FetchArgs};
+
+use crate::data::PlayerConfig;
 
 fn main() -> Result<(), Error> {
 	let mut args: Args = argh::from_env();
@@ -23,6 +27,53 @@ fn main() -> Result<(), Error> {
 			stream.read_to_string(&mut buf)?;
 
 			write!(io::stdout(), "{}", buf)?;
+		}
+		Command::Sloth(_) =>{
+				let file_path = "~/.config/uair/player_data.toml";
+
+				match PlayerConfig::extract_from_path(file_path) {
+						Ok(config) => {
+							println!("{:?}",config.player.sloth.sloth_val);
+						},
+						Err(e) => {
+							eprintln!("Failed to load player data: {}", e);
+						}
+				}
+		}
+		Command::Name(_) =>{
+				let file_path = "~/.config/uair/player_data.toml";
+
+				match PlayerConfig::extract_from_path(file_path) {
+						Ok(config) => {
+							println!("{:?}",config.player.name);
+						},
+						Err(e) => {
+							eprintln!("Failed to load player data: {}", e);
+						}
+				}
+		}
+		Command::Level(_) =>{
+				let file_path = "~/.config/uair/player_data.toml";
+
+				match PlayerConfig::extract_from_path(file_path) {
+						Ok(config) => {
+							println!("{:?}",config.player.level.level);
+						},
+						Err(e) => {
+							eprintln!("Failed to load player data: {}", e);
+						}
+				}
+		}
+		Command::Stamina(_) =>{
+				let file_path = "~/.config/uair/player_data.toml";
+
+				match PlayerConfig::extract_from_path(file_path) {
+						Ok(config) => {
+							println!("{:?}",config.player.stamina.stamina_val); },
+						Err(e) => {
+							eprintln!("Failed to load player data: {}", e);
+						}
+				}
 		}
 		Command::Listen(_) => {
 			let mut reader = BufReader::new(stream);

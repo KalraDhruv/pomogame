@@ -8,7 +8,7 @@ pub enum Command {
 	Level(LevelArgs),
 	Name(NameArgs),
 	Stamina(StaminaArgs),
-	Lazy(LazyArgs),
+	Sloth(SlothArgs),
 	Pause(PauseArgs),
 	Resume(ResumeArgs),
 	Toggle(ToggleArgs),
@@ -38,8 +38,8 @@ pub struct StaminaArgs{}
 
 #[derive(FromArgs, Serialize, Deserialize)]
 /// Obtain Player's Lazy Value.
-#[argh(subcommand, name = "lazy")]
-pub struct LazyArgs{}
+#[argh(subcommand, name = "sloth")]
+pub struct SlothArgs{}
 
 #[derive(FromArgs, Serialize, Deserialize)]
 /// Pause the timer.

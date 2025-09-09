@@ -1,0 +1,18 @@
+[player]
+name = "Decidueye"
+
+[player.level]
+level = 5
+level_experience = 350
+
+[player.stamina]
+stamina_val = 90
+
+[player.lazy_meter]
+lazy_meter_val = 15
+
+[player.counters]
+daily_completed_pomodoros = 10
+daily_rests = 2
+daily_streak = 5
+last_active_date = 2024-09-04
