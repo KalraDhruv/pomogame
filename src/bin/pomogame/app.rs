@@ -11,34 +11,18 @@ use std::io::{self, Error as IoError, ErrorKind, Write};
 use std::time::{Duration, Instant};
 use uair::{Command, FetchArgs, JumpArgs, ListenArgs, PauseArgs, ResumeArgs};
 use once_cell::sync::OnceCell;
-use once_cell::sync::Lazy;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 static mut OVERTIMER:OverTimer = OverTimer{
-	overtime:OnceCell::new()
+	defined : false
 };
-static WATCHER_THREAD: Lazy<thread::JoinHandle<()>> = Lazy::new(|| {
-    let overtime_ran_once_timer_clone = Arc::new(Mutex::new(false));
-    let overtime_ran_once_data_clone = Arc::new(Mutex::new(false));
 
-    thread::spawn(move || {
-        loop {
-            if *overtime_ran_once_timer_clone.lock().unwrap() {
-                *overtime_ran_once_data_clone.lock().unwrap() = true;
-                break;
-            }
-        }
-    })
-});
 pub struct OverTimer {
-	pub overtime: OnceCell<bool>,
+	pub defined: bool,
 }
 impl OverTimer {
-	fn set_overtime(&self, value:bool) -> bool{
-		*self.overtime.get_or_init(|| {
-			value
-		})
+	fn get_defined(&self) -> bool{
+		return self.defined;
 	}
 }
 pub struct App {
@@ -121,12 +105,13 @@ impl App {
 		// This block of code makes sure that the Overtimer is reinitialized for each session.
 		// Below the Once Cell variable, overtime_called_once and overtime_time_elapsed are set to their default values.
 		unsafe{
-			if OVERTIMER.overtime.get().is_none(){
+			if !OVERTIMER.get_defined(){
+				println!("Overtimer logic is running");
 				self.timer.overtime_duration = dest - start;
 				*self.timer.overtime_time_elapsed.lock().unwrap() = Duration::from_secs(1);
 				*self.timer.overtime_called_once.lock().unwrap() = false;
 				*self.data.overtime_called_once.lock().unwrap() = false;
-				let _ = OVERTIMER.set_overtime(true);
+				OVERTIMER.defined = true;
 			}
 		}
 		match self
@@ -141,22 +126,42 @@ impl App {
 					State::Finished
 				} else {
 					unsafe{
-						OVERTIMER.overtime = OnceCell::new();
+						OVERTIMER.defined= false;
 					}
 					self.data.next_session()
 				};
 				res?;
 			}
 			Event::Command(Command::Pause(_)) => {
+				// Need to make a change here and we are good.
 				println!("How can you see me?!");
 				if *self.timer.overtime_called_once.lock().unwrap(){
-					self.timer.state = self.data.next_session() 
+					unsafe{
+						OVERTIMER.defined = false;
+					}
+					if self.data.sid.is_last(){
+						println!("I run in the condition this timer is the last one!");
+						self.timer.state= State::Finished
+					}else{
+						self.timer.state = self.data.next_session() 
+					}
+					
 				}else{
 					self.timer.state = State::Paused(dest - Instant::now())
 				}
 			}
-			Event::Command(Command::Next(_)) => self.timer.state = self.data.next_session(),
-			Event::Command(Command::Prev(_)) => self.timer.state = self.data.prev_session(),
+			Event::Command(Command::Next(_)) =>{
+					unsafe{
+						OVERTIMER.defined= false;
+					} 
+					self.timer.state = self.data.next_session();
+				}
+			Event::Command(Command::Prev(_)) => {
+				unsafe{
+					OVERTIMER.defined= false;
+				}
+				self.timer.state = self.data.prev_session();
+			}
 			Event::Jump(idx) => self.timer.state = self.data.jump_session(idx),
 			Event::Command(Command::Reload(_)) => self.data.read_conf::<true>()?,
 			Event::Fetch(format, stream) => {
@@ -190,10 +195,13 @@ impl App {
 		let overtime_ran_once_timer_clone = Arc::clone(&self.timer.overtime_called_once);
 		let overtime_ran_once_data_clone=Arc::clone(&self.data.overtime_called_once);
 		
-		if *overtime_ran_once_timer_clone.lock().unwrap(){
-			*overtime_ran_once_data_clone.lock().unwrap() = true;
+		unsafe{
+			if *overtime_ran_once_timer_clone.lock().unwrap(){
+				println!("I am running!");
+				*overtime_ran_once_data_clone.lock().unwrap() = true;
+			}
 		}
-		//let _watcher_handle = &*WATCHER_THREAD;
+			
 		self.timer
 			.writer
 			.write::<false>(self.data.curr_session(), duration + DELTA)?;
